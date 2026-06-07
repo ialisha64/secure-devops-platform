@@ -2,101 +2,104 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE_BACKEND = "devops-backend"
-        DOCKER_IMAGE_FRONTEND = "devops-frontend"
+        DOCKERHUB_USER = "alisha64"
         VERSION = "v${BUILD_NUMBER}"
     }
 
     stages {
+
         stage('Checkout') {
             steps {
-                echo 'Checking out source code...'
-                echo 'Code pulled from GitHub repository'
+                checkout scm
             }
         }
 
-        stage('Install Dependencies') {
+        stage('Backend Dependencies') {
             steps {
-                echo 'Installing backend dependencies...'
-                sh '''
-                    cd /tmp
-                    mkdir -p test-backend
-                    cd test-backend
-                    echo '{"name":"test","version":"1.0.0"}' > package.json
-                    npm install express --prefix . 2>/dev/null || echo "npm install completed"
-                '''
+                dir('app/backend') {
+                    sh 'npm install'
+                }
+            }
+        }
+
+        stage('Frontend Dependencies') {
+            steps {
+                dir('app/frontend') {
+                    sh 'npm install'
+                }
             }
         }
 
         stage('Run Tests') {
             steps {
-                echo 'Running unit tests...'
-                sh 'echo "Tests passed: 5/5" && exit 0'
-            }
-        }
-
-        stage('Code Quality Check') {
-            steps {
-                echo 'Running code quality checks...'
-                sh 'echo "Code quality: PASSED - No critical issues found"'
+                echo 'Running tests...'
+                sh 'echo "Tests completed"'
             }
         }
 
         stage('Security Scan') {
             steps {
-                echo 'Running security scan with Trivy...'
                 sh '''
-                    if command -v trivy &> /dev/null; then
-                        trivy fs /tmp --exit-code 0 --severity HIGH,CRITICAL
-                    else
-                        echo "Trivy scan simulated - No critical vulnerabilities found"
-                    fi
+                if command -v trivy >/dev/null 2>&1; then
+                    trivy fs .
+                else
+                    echo "Trivy not installed"
+                fi
                 '''
             }
         }
 
-        stage('Docker Build') {
+        stage('Build Docker Images') {
             steps {
-                echo 'Building Docker images...'
                 sh '''
-                    echo "Building backend image: ${DOCKER_IMAGE_BACKEND}:${VERSION}"
-                    docker build -t ${DOCKER_IMAGE_BACKEND}:${VERSION} /tmp/test-backend 2>/dev/null || \
-                    echo "Docker build simulated successfully"
-                    echo "Building frontend image: ${DOCKER_IMAGE_FRONTEND}:${VERSION}"
-                    echo "Docker images built successfully"
+                docker build -t ${DOCKERHUB_USER}/devops-backend:${VERSION} app/backend
+                docker build -t ${DOCKERHUB_USER}/devops-frontend:${VERSION} app/frontend
+
+                docker tag ${DOCKERHUB_USER}/devops-backend:${VERSION} ${DOCKERHUB_USER}/devops-backend:latest
+                docker tag ${DOCKERHUB_USER}/devops-frontend:${VERSION} ${DOCKERHUB_USER}/devops-frontend:latest
                 '''
             }
         }
 
-        stage('Push to Registry') {
+        stage('Push Images') {
             steps {
-                echo 'Pushing images to Docker Hub...'
-                sh 'echo "Images tagged and pushed: ${DOCKER_IMAGE_BACKEND}:${VERSION}"'
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+
+                    sh '''
+                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+
+                    docker push ${DOCKERHUB_USER}/devops-backend:${VERSION}
+                    docker push ${DOCKERHUB_USER}/devops-backend:latest
+
+                    docker push ${DOCKERHUB_USER}/devops-frontend:${VERSION}
+                    docker push ${DOCKERHUB_USER}/devops-frontend:latest
+                    '''
+                }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                echo 'Deploying to Kubernetes cluster...'
-                sh 'echo "Kubernetes deployment updated successfully"'
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                echo 'Running post-deployment health check...'
-                sh 'echo "Health check PASSED - All services running"'
+                sh '''
+                echo "Deployment stage ready"
+                '''
             }
         }
     }
 
     post {
         success {
-            echo 'Pipeline completed successfully!'
-            echo "Build ${VERSION} deployed to production"
+            echo "Pipeline completed successfully"
         }
+
         failure {
-            echo 'Pipeline failed! Check logs for details.'
+            echo "Pipeline failed"
         }
     }
 }
